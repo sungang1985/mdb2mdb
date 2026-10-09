@@ -79,6 +79,16 @@ namespace Mdb2Mdb
             return Invoke(target, name, BindingFlags.GetProperty, args);
         }
 
+        /// <summary>
+        /// 读取文本型属性。Jet 返回的 ValidationRule、DefaultValue 等属性值末尾带有 '\0'，
+        /// 不去掉的话与预期字符串比较总是不相等；属性为空时返回 ""。
+        /// </summary>
+        public static string GetText(object target, string name)
+        {
+            var s = Get(target, name) as string;
+            return s == null ? "" : s.TrimEnd('\0');
+        }
+
         public static void Set(object target, string name, object value)
         {
             Invoke(target, name, BindingFlags.SetProperty, new[] { value });

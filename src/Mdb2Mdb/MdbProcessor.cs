@@ -459,7 +459,7 @@ namespace Mdb2Mdb
                 var p = new FieldProps();
                 p._required = (bool)Dao.Get(field, "Required");
                 p._allowZeroLength = TryGetBool(field, "AllowZeroLength");
-                p._defaultValue = Dao.Get(field, "DefaultValue") as string;
+                p._defaultValue = Dao.GetText(field, "DefaultValue");
                 foreach (var name in CustomNames)
                 {
                     object v = TryGetProperty(field, name);
@@ -493,7 +493,7 @@ namespace Mdb2Mdb
             {
                 try
                 {
-                    object cur = Dao.Get(field, name);
+                    object cur = value is string ? Dao.GetText(field, name) : Dao.Get(field, name);
                     if (!Equals(cur, value)) Dao.Set(field, name, value);
                 }
                 catch (Exception ex)
@@ -552,7 +552,7 @@ namespace Mdb2Mdb
             if (rule == null) return null;
 
             object field = Field(table, c.Name);
-            string current = Dao.Get(field, "ValidationRule") as string ?? "";
+            string current = Dao.GetText(field, "ValidationRule");
             if (current == rule) return null;
 
             string max = SchemaPlanner.MaxAbsValue(spec).Value.ToString(CultureInfo.InvariantCulture);

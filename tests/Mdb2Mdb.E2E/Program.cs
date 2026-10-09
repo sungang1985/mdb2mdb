@@ -73,7 +73,7 @@ namespace Mdb2Mdb.E2E
             // ROAD.GB 因空值未能设置，PLAIN.GB 原本就是不允许为空
             Check(summary.NullabilitySet == 3, "修改是否允许为空应为 3 个，实际 " + summary.NullabilitySet);
             Check(summary.NullabilityFailed == 1, "未能设为不允许为空应为 1 个，实际 " + summary.NullabilityFailed);
-            Check(lines.Contains("  LANE：DOUBLE → LONG；允许为空：否 → 是"), "LANE 日志应记录 否 → 是");
+            Check(lines.Contains("  LANE：DOUBLE → LONG；长度限制：最多 2 位数字；允许为空：否 → 是"), "LANE 日志应记录长度限制和 否 → 是");
             Check(lines.Contains("  CLASS：TEXT(3) 已符合；允许为空：是 → 否"), "CLASS 日志应记录 是 → 否");
             Check(lines.Contains("  GB：DOUBLE → LONG；长度限制：最多 6 位数字"), "PLAIN.GB 日志：长度限制，且无允许为空的变化");
 
@@ -97,6 +97,21 @@ namespace Mdb2Mdb.E2E
             if (File.Exists(cliOutput)) Verify(cliOutput);
 
             VerifyEnforcement(output);
+
+            // 3. 对已处理过的文件再处理一次：不应再有任何改动
+            Console.WriteLine();
+            Console.WriteLine("再次处理 " + Path.GetFileName(output));
+            string again = Path.Combine(dir, "再次处理.mdb");
+            if (File.Exists(again)) File.Delete(again);
+            var lines2 = new List<string>();
+            var log2 = new Logger(l => { Console.WriteLine(l); lines2.Add(l); });
+            var s2 = new MdbProcessor(log2).Run(output, again, true);
+            Check(log2.Errors == 0, "再次处理不应有错误");
+            Check(s2.FieldsAltered == 0, "再次处理不应修改类型，实际 " + s2.FieldsAltered);
+            Check(s2.LengthRulesSet == 0, "再次处理不应重复设置长度限制，实际 " + s2.LengthRulesSet);
+            Check(s2.NullabilitySet == 0, "再次处理不应修改是否允许为空，实际 " + s2.NullabilitySet);
+            Check(s2.PropertiesSet == 0, "再次处理不应重复设置小数位数/格式，实际 " + s2.PropertiesSet);
+            Check(!lines2.Exists(l => l.Contains("替换原有效性规则")), "再次处理不应出现“替换原有效性规则”");
 
             Console.WriteLine();
             if (Failures.Count == 0)
@@ -214,10 +229,11 @@ namespace Mdb2Mdb.E2E
                 object plainTd = Dao.Item(Dao.Get(db, "TableDefs"), "PLAIN");
                 Check(FieldProp(plainTd, "ID", "DecimalPlaces") == null, "非标准字段不设置小数位数");
                 Check((bool)Dao.Get(Dao.Item(Dao.Get(plainTd, "Fields"), "GB"), "Required"), "PLAIN.GB 改类型后应为不允许为空");
-                Eq(Dao.Get(Dao.Item(fields, "GB"), "ValidationRule"), "Is Null Or Between -999999 And 999999", "ROAD.GB 有效性规则");
-                Eq(Dao.Get(Dao.Item(fields, "ANGLE"), "ValidationRule"), "Is Null Or Between -999.95 And 999.95", "ROAD.ANGLE 有效性规则");
-                Eq(Dao.Get(Dao.Item(fields, "NAME"), "ValidationRule"), "", "文本字段不加有效性规则（长度由字段大小限制）");
-                Eq(Dao.Get(Dao.Item(Dao.Get(plainTd, "Fields"), "WEIGHT"), "ValidationRule"), "", "PLAIN.WEIGHT 已有超长数据，不设置有效性规则");
+                Eq(Dao.GetText(Dao.Item(fields, "GB"), "ValidationRule"), "Is Null Or Between -999999 And 999999", "ROAD.GB 有效性规则");
+                Eq(Dao.GetText(Dao.Item(fields, "ANGLE"), "ValidationRule"), "Is Null Or Between -999.95 And 999.95", "ROAD.ANGLE 有效性规则");
+                Eq(Dao.GetText(Dao.Item(fields, "GB"), "ValidationText"), "GB（分类代码）超出标准长度：最多 6 位数字。", "ROAD.GB 有效性文本");
+                Eq(Dao.GetText(Dao.Item(fields, "NAME"), "ValidationRule"), "", "文本字段不加有效性规则（长度由字段大小限制）");
+                Eq(Dao.GetText(Dao.Item(Dao.Get(plainTd, "Fields"), "WEIGHT"), "ValidationRule"), "", "PLAIN.WEIGHT 已有超长数据，不设置有效性规则");
 
                 // GDB 定义
                 var items = ReadRows(db, "SELECT [Definition] FROM [GDB_Items] WHERE [PhysicalName] = 'ROAD'");
@@ -258,7 +274,9 @@ namespace Mdb2Mdb.E2E
                 Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS], [ANGLE]) VALUES (720100, 'C06', 1000)", "ANGLE 录入 1000");
                 Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS], [LANE]) VALUES (720100, 'C07', 100)", "LANE 录入 3 位数字");
                 Rejects(db, "INSERT INTO [ROAD] ([GB]) VALUES (720100)", "CLASS 不允许为空");
-                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (720100, 'ABCD')", "CLASS 录入超过 3 个字符");
+                // 文本超长：Jet 通过 SQL 录入时会截断而不报错，无论哪种情况都不会存入超过字段大小的值
+                try { Exec(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (720100, 'ABCD')"); } catch (DaoException) { }
+                Check(Scalar(db, "SELECT COUNT(*) FROM [ROAD] WHERE Len([CLASS]) > 3") == 0, "CLASS 不会存入超过 3 个字符的值");
                 Accepts(db, "INSERT INTO [PLAIN] ([ID], [GB], [WEIGHT]) VALUES (9, 110101, 999)", "PLAIN.WEIGHT 未设置限制");
 
                 // 与截图相同的操作：在已有记录上把 GB 改成 7 位数
@@ -294,6 +312,13 @@ namespace Mdb2Mdb.E2E
                 Dao.Release(db);
                 File.Delete(copy);
             }
+        }
+
+        private static int Scalar(object db, string sql)
+        {
+            var rows = ReadRows(db, sql);
+            foreach (var v in rows[0].Values) return Convert.ToInt32(v);
+            return -1;
         }
 
         private static void Accepts(object db, string sql, string what)
