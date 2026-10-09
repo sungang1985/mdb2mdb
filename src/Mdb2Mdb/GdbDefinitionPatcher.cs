@@ -19,17 +19,24 @@ namespace Mdb2Mdb
         private static readonly Regex FieldTypeElement = new Regex(
             @"<FieldType>(.*?)</FieldType>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
+        private static readonly Regex IsNullableElement = new Regex(
+            @"<IsNullable>(.*?)</IsNullable>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
         /// <param name="xml">原定义 XML</param>
         /// <param name="newFieldTypes">字段名 → 新的 esriFieldType</param>
         /// <param name="deletedFields">已删除的字段名</param>
+        /// <param name="isNullable">字段名 → 是否允许为空（写入 IsNullable）</param>
         /// <returns>修改后的 XML；无需修改时返回原字符串</returns>
-        public static string Patch(string xml, IDictionary<string, string> newFieldTypes, ICollection<string> deletedFields)
+        public static string Patch(string xml, IDictionary<string, string> newFieldTypes, ICollection<string> deletedFields,
+                                   IDictionary<string, bool> isNullable = null)
         {
             if (string.IsNullOrEmpty(xml)) return xml;
 
             var types = new Dictionary<string, string>(newFieldTypes ?? new Dictionary<string, string>(),
                 StringComparer.OrdinalIgnoreCase);
             var deleted = new HashSet<string>(deletedFields ?? new string[0], StringComparer.OrdinalIgnoreCase);
+            var nullable = new Dictionary<string, bool>(isNullable ?? new Dictionary<string, bool>(),
+                StringComparer.OrdinalIgnoreCase);
 
             string result = FieldInfoBlock.Replace(xml, m =>
             {
@@ -39,13 +46,26 @@ namespace Mdb2Mdb
 
                 if (deleted.Contains(name)) return string.Empty;
 
+                string block = m.Value;
                 string esriType;
-                if (types.TryGetValue(name, out esriType))
+                if (types.TryGetValue(name, out esriType) && FieldTypeElement.IsMatch(block))
+                    block = FieldTypeElement.Replace(block, "<FieldType>" + esriType + "</FieldType>", 1);
+
+                bool allowNull;
+                if (nullable.TryGetValue(name, out allowNull))
                 {
-                    if (FieldTypeElement.IsMatch(m.Value))
-                        return FieldTypeElement.Replace(m.Value, "<FieldType>" + esriType + "</FieldType>", 1);
+                    string element = "<IsNullable>" + (allowNull ? "true" : "false") + "</IsNullable>";
+                    if (IsNullableElement.IsMatch(block))
+                        block = IsNullableElement.Replace(block, element, 1);
+                    else
+                    {
+                        // ArcGIS 写出的定义中 IsNullable 紧跟在 FieldType 之后
+                        int at = block.IndexOf("</FieldType>", StringComparison.Ordinal);
+                        at = at >= 0 ? at + "</FieldType>".Length : block.LastIndexOf("</GPFieldInfoEx>", StringComparison.Ordinal);
+                        block = block.Insert(at, element);
+                    }
                 }
-                return m.Value;
+                return block;
             });
 
             foreach (var element in new[] { "AreaFieldName", "LengthFieldName" })

@@ -11,12 +11,15 @@ namespace Mdb2Mdb
         public int FieldsAltered;
         public int FieldsDeleted;
         public int PropertiesSet;
+        public int NullabilitySet;
+        public int NullabilityFailed;
         public int GdbDefinitionsUpdated;
     }
 
     /// <summary>
     /// 复制输入 mdb 到输出路径，在输出文件上：
-    /// 1. 遍历所有用户表，字段名与标准属性项同名的，修改为标准的数据类型/长度，并设置小数位数；
+    /// 1. 遍历所有用户表，字段名与标准属性项同名的，修改为标准的数据类型/长度，设置小数位数，
+    ///    并按标准设置是否允许为空；
     /// 2. 删除 Shape_Length、Shape_Area 字段；
     /// 3. 若为 ArcGIS 个人地理数据库，同步修改 GDB_Items 中的要素类定义；
     /// 4. 压缩数据库。
@@ -108,8 +111,11 @@ namespace Mdb2Mdb
 
             _log.Info("");
             _log.Info(string.Format(
-                "完成：检查表 {0} 个，匹配标准字段 {1} 个，修改类型/长度 {2} 个，设置小数位数/格式 {3} 处，删除字段 {4} 个，同步 GDB 要素类定义 {5} 个；警告 {6} 条，错误 {7} 条。",
+                "完成：检查表 {0} 个，匹配标准字段 {1} 个，修改类型/长度 {2} 个，设置小数位数/格式 {3} 处，" +
+                "修改是否允许为空 {4} 个{5}，删除字段 {6} 个，同步 GDB 要素类定义 {7} 个；警告 {8} 条，错误 {9} 条。",
                 _summary.TablesScanned, _summary.FieldsMatched, _summary.FieldsAltered, _summary.PropertiesSet,
+                _summary.NullabilitySet,
+                _summary.NullabilityFailed > 0 ? "（另有 " + _summary.NullabilityFailed + " 个因存在空值未能设为不允许为空）" : "",
                 _summary.FieldsDeleted, _summary.GdbDefinitionsUpdated, _log.Warnings, _log.Errors));
 
             return _summary;
@@ -136,25 +142,39 @@ namespace Mdb2Mdb
 
             if (hasGdbItems) _log.Info("识别为 ArcGIS 个人地理数据库，将同步更新 GDB_Items 中的要素类定义。");
 
-            // 表名 → (字段名 → 新 esri 类型)、(已删除字段)
-            var typeChanges = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-            var deletions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            // 每个表处理后的结果，用于同步 GDB_Items 中的要素类定义
+            var results = new Dictionary<string, TableResult>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var table in tableNames)
             {
                 _summary.TablesScanned++;
-                var changed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var deleted = new List<string>();
-                ProcessTable(table, changed, deleted);
-                if (changed.Count > 0) typeChanges[table] = changed;
-                if (deleted.Count > 0) deletions[table] = deleted;
+                var result = new TableResult();
+                ProcessTable(table, result);
+                if (!result.IsEmpty) results[table] = result;
             }
 
-            if (hasGdbItems && (typeChanges.Count > 0 || deletions.Count > 0))
-                UpdateGdbDefinitions(typeChanges, deletions);
+            if (hasGdbItems && results.Count > 0)
+                UpdateGdbDefinitions(results);
         }
 
-        private void ProcessTable(string table, Dictionary<string, string> changed, List<string> deleted)
+        private sealed class TableResult
+        {
+            /// <summary>字段名 → 新的 esriFieldType</summary>
+            public readonly Dictionary<string, string> TypeChanges = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            /// <summary>已删除的字段</summary>
+            public readonly List<string> Deleted = new List<string>();
+
+            /// <summary>标准字段处理后实际的“是否允许为空”</summary>
+            public readonly Dictionary<string, bool> IsNullable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+            public bool IsEmpty
+            {
+                get { return TypeChanges.Count == 0 && Deleted.Count == 0 && IsNullable.Count == 0; }
+            }
+        }
+
+        private void ProcessTable(string table, TableResult result)
         {
             var columns = ReadColumns(table);
             var plans = SchemaPlanner.Plan(columns);
@@ -175,7 +195,7 @@ namespace Mdb2Mdb
                     if (plan.Delete)
                     {
                         DropColumn(table, c.Name);
-                        deleted.Add(c.Name);
+                        result.Deleted.Add(c.Name);
                         _summary.FieldsDeleted++;
                         _log.Info("  " + c.Name + "：已删除");
                         continue;
@@ -193,7 +213,7 @@ namespace Mdb2Mdb
                     else if (plan.NeedTypeChange)
                     {
                         ChangeType(table, c, spec);
-                        changed[c.Name] = SchemaPlanner.EsriFieldType(spec.Type);
+                        result.TypeChanges[c.Name] = SchemaPlanner.EsriFieldType(spec.Type);
                         _summary.FieldsAltered++;
                         notes.Add(before + " → " + spec.Describe());
                     }
@@ -219,6 +239,9 @@ namespace Mdb2Mdb
                         }
                     }
 
+                    string nullNote = ApplyNullability(table, c.Name, spec, result);
+                    if (nullNote != null) notes.Add(nullNote);
+
                     _log.Info("  " + c.Name + "：" + string.Join("；", notes.ToArray()));
                 }
                 catch (Exception ex)
@@ -241,7 +264,8 @@ namespace Mdb2Mdb
                     Name = (string)Dao.Get(f, "Name"),
                     DaoType = Convert.ToInt32(Dao.Get(f, "Type")),
                     Size = Convert.ToInt32(Dao.Get(f, "Size")),
-                    Attributes = Convert.ToInt32(Dao.Get(f, "Attributes"))
+                    Attributes = Convert.ToInt32(Dao.Get(f, "Attributes")),
+                    Required = (bool)Dao.Get(f, "Required")
                 });
             }
             return list;
@@ -404,7 +428,10 @@ namespace Mdb2Mdb
             Execute("ALTER TABLE " + Dao.Q(table) + " DROP COLUMN " + Dao.Q(tmp));
         }
 
-        /// <summary>修改类型后需要恢复的字段属性（Jet 的 ALTER COLUMN 会重置这些属性）。</summary>
+        /// <summary>
+        /// 修改类型后需要恢复的字段属性（Jet 的 ALTER COLUMN 会重置这些属性）。
+        /// “必需”属性不在此恢复，由 ApplyNullability 按标准设置。
+        /// </summary>
         private sealed class FieldProps
         {
             private bool _required;
@@ -436,7 +463,6 @@ namespace Mdb2Mdb
             {
                 if (textToText) TrySet(field, "AllowZeroLength", _allowZeroLength, log, label);
                 if (!string.IsNullOrEmpty(_defaultValue)) TrySet(field, "DefaultValue", _defaultValue, log, label);
-                if (_required) TrySet(field, "Required", true, log, label);
                 foreach (var kv in _custom)
                 {
                     try
@@ -471,6 +497,56 @@ namespace Mdb2Mdb
             {
                 try { return (bool)Dao.Get(field, name); }
                 catch (DaoException) { return false; }
+            }
+        }
+
+        // ---------------------------------------------------------------- 是否允许为空
+
+        /// <summary>
+        /// 按标准设置字段的“必需”属性（不允许为空 = 必需）。已有空值的字段无法设为不允许为空，
+        /// 保持原状并给出警告。返回日志说明，无改动时返回 null。
+        /// </summary>
+        private string ApplyNullability(string table, string column, FieldSpec spec, TableResult result)
+        {
+            object field = Field(table, column);
+            bool required = (bool)Dao.Get(field, "Required");
+            bool wantRequired = !spec.Nullable;
+            string note = null;
+
+            if (required != wantRequired)
+            {
+                int nulls = wantRequired ? CountNulls(table, column) : 0;
+                if (nulls > 0)
+                {
+                    _summary.NullabilityFailed++;
+                    _log.Warn(table + "." + column + " 按标准不允许为空，但有 " + nulls +
+                              " 条记录为空值，未能设置（请补全数据后重新处理）。");
+                }
+                else
+                {
+                    Dao.Set(field, "Required", wantRequired);
+                    required = wantRequired;
+                    _summary.NullabilitySet++;
+                    note = "允许为空：" + (wantRequired ? "是 → 否" : "否 → 是");
+                }
+            }
+
+            result.IsNullable[column] = !required;
+            return note;
+        }
+
+        private int CountNulls(string table, string column)
+        {
+            object rs = Dao.Call(_db, "OpenRecordset",
+                "SELECT COUNT(*) FROM " + Dao.Q(table) + " WHERE " + Dao.Q(column) + " IS NULL", Dao.dbOpenSnapshot);
+            try
+            {
+                return Convert.ToInt32(Dao.Get(Dao.Item(Dao.Get(rs, "Fields"), 0), "Value"));
+            }
+            finally
+            {
+                Dao.Call(rs, "Close");
+                Dao.Release(rs);
             }
         }
 
@@ -608,8 +684,7 @@ namespace Mdb2Mdb
 
         // ---------------------------------------------------------------- GDB 元数据
 
-        private void UpdateGdbDefinitions(Dictionary<string, Dictionary<string, string>> typeChanges,
-                                          Dictionary<string, List<string>> deletions)
+        private void UpdateGdbDefinitions(Dictionary<string, TableResult> results)
         {
             _log.Info("");
             _log.Info("[GDB_Items] 同步要素类定义");
@@ -627,17 +702,13 @@ namespace Mdb2Mdb
                     string table = Dao.Get(fPhysical, "Value") as string;
                     if (string.IsNullOrEmpty(table)) table = Dao.Get(fName, "Value") as string;
 
-                    Dictionary<string, string> changed;
-                    List<string> deleted;
-                    typeChanges.TryGetValue(table ?? "", out changed);
-                    deletions.TryGetValue(table ?? "", out deleted);
-
-                    if (changed != null || deleted != null)
+                    TableResult result;
+                    if (results.TryGetValue(table ?? "", out result))
                     {
                         try
                         {
                             string xml = Dao.Get(fDef, "Value") as string;
-                            string patched = GdbDefinitionPatcher.Patch(xml, changed, deleted);
+                            string patched = GdbDefinitionPatcher.Patch(xml, result.TypeChanges, result.Deleted, result.IsNullable);
                             if (patched != xml)
                             {
                                 Dao.Call(rs, "Edit");

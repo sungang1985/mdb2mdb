@@ -45,6 +45,7 @@ namespace Mdb2Mdb
 
         // RecordsetTypeEnum / RecordsetOptionEnum
         public const int dbOpenDynaset = 2;
+        public const int dbOpenSnapshot = 4;
         public const int dbFailOnError = 128;
 
         // Jet "Property not found"

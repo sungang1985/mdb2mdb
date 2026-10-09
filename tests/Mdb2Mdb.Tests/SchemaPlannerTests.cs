@@ -54,9 +54,9 @@ namespace Mdb2Mdb.Tests
 
     public class SchemaPlannerTests
     {
-        private static ColumnInfo Col(string name, int type, int size = 0, int attributes = 0)
+        private static ColumnInfo Col(string name, int type, int size = 0, int attributes = 0, bool required = false)
         {
-            return new ColumnInfo { Name = name, DaoType = type, Size = size, Attributes = attributes };
+            return new ColumnInfo { Name = name, DaoType = type, Size = size, Attributes = attributes, Required = required };
         }
 
         [Fact]
@@ -99,6 +99,31 @@ namespace Mdb2Mdb.Tests
                 Col("FTIME", Dao.dbDate, 8), Col("PAC", Dao.dbLong, 4)
             };
             Assert.All(SchemaPlanner.Plan(columns), p => Assert.False(p.NeedTypeChange));
+        }
+
+        [Fact]
+        public void NullabilityFollowsStandard()
+        {
+            var plans = SchemaPlanner.Plan(new[]
+            {
+                Col("GB", Dao.dbLong, 4),                          // 标准：否，当前允许为空 → 需修改
+                Col("CLASS", Dao.dbText, 3, required: true),       // 标准：否，已必需
+                Col("NAME", Dao.dbText, 60, required: true),       // 标准：是，当前必需 → 需修改
+                Col("TYPE", Dao.dbText, 20),                       // 标准：是，已允许为空
+            }).ToDictionary(p => p.Column.Name);
+
+            Assert.True(plans["GB"].NeedNullabilityChange);
+            Assert.False(plans["CLASS"].NeedNullabilityChange);
+            Assert.True(plans["NAME"].NeedNullabilityChange);
+            Assert.False(plans["TYPE"].NeedNullabilityChange);
+            Assert.False(plans["GB"].NeedTypeChange);
+        }
+
+        [Fact]
+        public void OnlyGbAndClassAreNotNullable()
+        {
+            Assert.Equal(new[] { "CLASS", "GB" },
+                FieldSpecs.All.Where(s => !s.Nullable).Select(s => s.Name).OrderBy(n => n).ToArray());
         }
 
         [Fact]

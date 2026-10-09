@@ -11,6 +11,9 @@ namespace Mdb2Mdb
         public int Size;
         public int Attributes;
 
+        /// <summary>Access 字段的“必需”属性，true 表示不允许为空。</summary>
+        public bool Required;
+
         public bool IsAutoNumber
         {
             get { return (Attributes & Dao.dbAutoIncrField) != 0; }
@@ -37,6 +40,9 @@ namespace Mdb2Mdb
 
         /// <summary>数据类型或文本长度与标准不一致。</summary>
         public bool NeedTypeChange;
+
+        /// <summary>是否允许为空与标准不一致。</summary>
+        public bool NeedNullabilityChange;
     }
 
     public static class SchemaPlanner
@@ -76,7 +82,8 @@ namespace Mdb2Mdb
                 {
                     Column = c,
                     Spec = spec,
-                    NeedTypeChange = !Matches(c, spec)
+                    NeedTypeChange = !Matches(c, spec),
+                    NeedNullabilityChange = c.Required == spec.Nullable
                 });
             }
             return plans;

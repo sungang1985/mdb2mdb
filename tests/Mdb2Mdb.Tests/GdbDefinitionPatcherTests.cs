@@ -54,6 +54,40 @@ namespace Mdb2Mdb.Tests
         }
 
         [Fact]
+        public void SetsIsNullableOfListedFields()
+        {
+            var nullable = new Dictionary<string, bool> { { "GB", false }, { "name", true } };
+            string patched = GdbDefinitionPatcher.Patch(Xml, null, null, nullable);
+
+            Assert.Contains("<Name>GB</Name><AliasName>分类代码</AliasName><ModelName>GB</ModelName><FieldType>esriFieldTypeSmallInteger</FieldType><IsNullable>false</IsNullable>", patched);
+            Assert.Contains("<Name>NAME</Name><AliasName>名称</AliasName><ModelName>NAME</ModelName><FieldType>esriFieldTypeString</FieldType><IsNullable>true</IsNullable>", patched);
+            // 未列出的字段不变
+            Assert.Contains("<Name>ObjectID</Name><ModelName>ObjectID</ModelName><FieldType>esriFieldTypeOID</FieldType><IsNullable>false</IsNullable>", patched);
+            Assert.Equal(Xml.Length + 1, patched.Length); // true → false
+        }
+
+        [Fact]
+        public void InsertsIsNullableWhenMissing()
+        {
+            const string xml = "<GPFieldInfoExs><GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>CLASS</Name><ModelName>CLASS</ModelName>" +
+                               "<FieldType>esriFieldTypeString</FieldType></GPFieldInfoEx></GPFieldInfoExs>";
+            string patched = GdbDefinitionPatcher.Patch(xml, null, null, new Dictionary<string, bool> { { "CLASS", false } });
+            Assert.Contains("<FieldType>esriFieldTypeString</FieldType><IsNullable>false</IsNullable></GPFieldInfoEx>", patched);
+        }
+
+        [Fact]
+        public void TypeNullabilityAndDeletionTogether()
+        {
+            string patched = GdbDefinitionPatcher.Patch(Xml,
+                new Dictionary<string, string> { { "GB", "esriFieldTypeInteger" } },
+                new[] { "Shape_Length", "Shape_Area" },
+                new Dictionary<string, bool> { { "GB", false } });
+            Assert.Contains("<Name>GB</Name><AliasName>分类代码</AliasName><ModelName>GB</ModelName><FieldType>esriFieldTypeInteger</FieldType><IsNullable>false</IsNullable>", patched);
+            Assert.DoesNotContain("Shape_Length</Name>", patched);
+            Assert.Contains("<LengthFieldName></LengthFieldName>", patched);
+        }
+
+        [Fact]
         public void NothingToDoReturnsSameText()
         {
             Assert.Equal(Xml, GdbDefinitionPatcher.Patch(Xml, new Dictionary<string, string>(), new string[0]));

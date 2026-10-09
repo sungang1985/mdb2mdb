@@ -26,6 +26,7 @@ namespace Mdb2Mdb.E2E
             "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>GB</Name><AliasName>分类代码</AliasName><ModelName>GB</ModelName><FieldType>esriFieldTypeString</FieldType><IsNullable>true</IsNullable></GPFieldInfoEx>" +
             "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>NAME</Name><AliasName>名称</AliasName><ModelName>NAME</ModelName><FieldType>esriFieldTypeString</FieldType><IsNullable>true</IsNullable></GPFieldInfoEx>" +
             "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>ANGLE</Name><ModelName>ANGLE</ModelName><FieldType>esriFieldTypeDouble</FieldType><IsNullable>true</IsNullable></GPFieldInfoEx>" +
+            "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>CLASS</Name><ModelName>CLASS</ModelName><FieldType>esriFieldTypeString</FieldType><IsNullable>true</IsNullable></GPFieldInfoEx>" +
             "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>Shape_Length</Name><ModelName>Shape_Length</ModelName><FieldType>esriFieldTypeDouble</FieldType><IsNullable>true</IsNullable><Required>true</Required><Editable>false</Editable></GPFieldInfoEx>" +
             "<GPFieldInfoEx xsi:type='typens:GPFieldInfoEx'><Name>Shape_Area</Name><ModelName>Shape_Area</ModelName><FieldType>esriFieldTypeDouble</FieldType><IsNullable>true</IsNullable><Required>true</Required><Editable>false</Editable></GPFieldInfoEx>" +
             "</GPFieldInfoExs><ShapeType>esriGeometryPolygon</ShapeType><ShapeFieldName>Shape</ShapeFieldName>" +
@@ -102,19 +103,20 @@ namespace Mdb2Mdb.E2E
                 // 要素类：多种不符合标准的字段
                 Exec(db, "CREATE TABLE [ROAD] ([ObjectID] COUNTER CONSTRAINT [PK_ROAD] PRIMARY KEY, [Shape] LONGBINARY, " +
                          "[GB] TEXT(10), [NAME] TEXT(50), [TYPE] TEXT(50), [ANGLE] DOUBLE, [FTIME] TEXT(30), [PAC] DOUBLE, " +
-                         "[WIDTH] SINGLE, [LANE] DOUBLE, [KV] LONG NOT NULL, [类型] TEXT(20), [Shape_Length] DOUBLE, [Shape_Area] DOUBLE)");
+                         "[WIDTH] SINGLE, [LANE] DOUBLE, [KV] LONG NOT NULL, [类型] TEXT(20), [CLASS] TEXT(3), [Shape_Length] DOUBLE, [Shape_Area] DOUBLE)");
                 Exec(db, "CREATE INDEX [IX_NAME] ON [ROAD] ([NAME])");
                 Exec(db, "CREATE INDEX [IX_SL] ON [ROAD] ([Shape_Length])");
-                Exec(db, "INSERT INTO [ROAD] ([GB], [NAME], [TYPE], [ANGLE], [FTIME], [PAC], [WIDTH], [LANE], [KV], [类型], [Shape_Length], [Shape_Area]) " +
-                         "VALUES ('660100', '大型', '一二三四五六七八九十一二三四五六七八九十一二三四五', 12.34, '2025/03/08 14:05:09', 321311106, 3.5, 2.5, 220, '甲', 357.675449, 8289.822516)");
-                Exec(db, "INSERT INTO [ROAD] ([GB], [NAME], [TYPE], [ANGLE], [FTIME], [PAC], [WIDTH], [LANE], [KV], [类型], [Shape_Length], [Shape_Area]) " +
-                         "VALUES ('abc', NULL, '短', NULL, NULL, NULL, NULL, 2, 35, NULL, 1, 2)");
+                Exec(db, "INSERT INTO [ROAD] ([GB], [NAME], [TYPE], [ANGLE], [FTIME], [PAC], [WIDTH], [LANE], [KV], [类型], [CLASS], [Shape_Length], [Shape_Area]) " +
+                         "VALUES ('660100', '大型', '一二三四五六七八九十一二三四五六七八九十一二三四五', 12.34, '2025/03/08 14:05:09', 321311106, 3.5, 2.5, 220, '甲', 'A01', 357.675449, 8289.822516)");
+                Exec(db, "INSERT INTO [ROAD] ([GB], [NAME], [TYPE], [ANGLE], [FTIME], [PAC], [WIDTH], [LANE], [KV], [类型], [CLASS], [Shape_Length], [Shape_Area]) " +
+                         "VALUES ('abc', NULL, '短', NULL, NULL, NULL, NULL, 2, 35, NULL, 'B02', 1, 2)");
 
                 // 普通表（非要素类）
-                Exec(db, "CREATE TABLE [PLAIN] ([ID] LONG, [ELEV] TEXT(20), [Shape_Area] DOUBLE)");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV]) VALUES (1, '12.5')");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV]) VALUES (2, '')");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV]) VALUES (3, 'n/a')");
+                // GB：DOUBLE 且 NOT NULL → 改为 LONG 后仍应为不允许为空
+                Exec(db, "CREATE TABLE [PLAIN] ([ID] LONG, [ELEV] TEXT(20), [GB] DOUBLE NOT NULL, [Shape_Area] DOUBLE)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (1, '12.5', 110101)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (2, '', 110102)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (3, 'n/a', 110103)");
             }
             finally
             {
@@ -136,9 +138,9 @@ namespace Mdb2Mdb.E2E
                 ExpectFields(db, "ROAD", new[]
                 {
                     "ObjectID:LONG", "Shape:OLE", "GB:LONG", "NAME:TEXT(60)", "TYPE:TEXT(20)", "ANGLE:FLOAT",
-                    "FTIME:DATE", "PAC:LONG", "WIDTH:FLOAT", "LANE:LONG", "KV:TEXT(8)", "类型:TEXT(20)"
+                    "FTIME:DATE", "PAC:LONG", "WIDTH:FLOAT", "LANE:LONG", "KV:TEXT(8)", "类型:TEXT(20)", "CLASS:TEXT(3)"
                 });
-                ExpectFields(db, "PLAIN", new[] { "ID:LONG", "ELEV:DOUBLE" });
+                ExpectFields(db, "PLAIN", new[] { "ID:LONG", "ELEV:DOUBLE", "GB:LONG" });
                 ExpectFields(db, "GDB_Items", new[] { "ObjectID:LONG", "Name:TEXT(160)", "PhysicalName:TEXT(160)", "Type:TEXT(38)", "Definition:MEMO" });
 
                 // 数据
@@ -167,6 +169,7 @@ namespace Mdb2Mdb.E2E
                     Eq(plain[0]["ELEV"], 12.5, "ELEV 文本转 DOUBLE");
                     Eq(plain[1]["ELEV"], DBNull.Value, "ELEV 空串转空值");
                     Eq(plain[2]["ELEV"], DBNull.Value, "ELEV 非数字置空");
+                    Eq(plain[0]["GB"], 110101, "PLAIN.GB 转 LONG");
                 }
                 else Check(false, "PLAIN 应有 3 条记录");
 
@@ -179,13 +182,19 @@ namespace Mdb2Mdb.E2E
                 Check(indexes.Contains("PK_ROAD"), "主键应保留");
                 Check(!indexes.Contains("IX_SL"), "Shape_Length 上的索引应随字段删除");
 
+                // 是否允许为空：GB、CLASS 为“否”，其余为“是”
                 object fields = Dao.Get(road, "Fields");
-                Check((bool)Dao.Get(Dao.Item(fields, "KV"), "Required"), "KV 的必填属性应恢复");
+                Check((bool)Dao.Get(Dao.Item(fields, "CLASS"), "Required"), "CLASS 应设为不允许为空");
+                Check(!(bool)Dao.Get(Dao.Item(fields, "GB"), "Required"), "ROAD.GB 有空值，应保持允许为空");
+                Check(!(bool)Dao.Get(Dao.Item(fields, "KV"), "Required"), "KV 原为必填，应按标准改为允许为空");
+                Check(!(bool)Dao.Get(Dao.Item(fields, "NAME"), "Required"), "NAME 应允许为空");
+                Check(!(bool)Dao.Get(Dao.Item(fields, "类型"), "Required"), "非标准字段不受影响");
                 Eq(FieldProp(road, "ANGLE", "DecimalPlaces"), (byte)1, "ANGLE 小数位数");
                 Eq(FieldProp(road, "WIDTH", "DecimalPlaces"), (byte)1, "WIDTH 小数位数");
                 Eq(FieldProp(road, "FTIME", "Format"), FieldSpec.DateFormat, "FTIME 格式");
                 object plainTd = Dao.Item(Dao.Get(db, "TableDefs"), "PLAIN");
                 Check(FieldProp(plainTd, "ID", "DecimalPlaces") == null, "非标准字段不设置小数位数");
+                Check((bool)Dao.Get(Dao.Item(Dao.Get(plainTd, "Fields"), "GB"), "Required"), "PLAIN.GB 改类型后应为不允许为空");
 
                 // GDB 定义
                 var items = ReadRows(db, "SELECT [Definition] FROM [GDB_Items] WHERE [PhysicalName] = 'ROAD'");
@@ -193,7 +202,8 @@ namespace Mdb2Mdb.E2E
                 Check(xml != null, "GDB_Items 中应有 ROAD 定义");
                 if (xml != null)
                 {
-                    Check(xml.Contains("<Name>GB</Name><AliasName>分类代码</AliasName><ModelName>GB</ModelName><FieldType>esriFieldTypeInteger</FieldType>"), "GB 的 FieldType 应更新为 esriFieldTypeInteger");
+                    Check(xml.Contains("<Name>GB</Name><AliasName>分类代码</AliasName><ModelName>GB</ModelName><FieldType>esriFieldTypeInteger</FieldType><IsNullable>true</IsNullable>"), "GB 的 FieldType 应更新为 esriFieldTypeInteger，IsNullable 与实际一致(true)");
+                    Check(xml.Contains("<Name>CLASS</Name><ModelName>CLASS</ModelName><FieldType>esriFieldTypeString</FieldType><IsNullable>false</IsNullable>"), "CLASS 的 IsNullable 应更新为 false");
                     Check(xml.Contains("<Name>ANGLE</Name><ModelName>ANGLE</ModelName><FieldType>esriFieldTypeSingle</FieldType>"), "ANGLE 的 FieldType 应更新为 esriFieldTypeSingle");
                     Check(!xml.Contains("<Name>Shape_Length</Name>") && !xml.Contains("<Name>Shape_Area</Name>"), "定义中应删除 Shape_Length/Shape_Area");
                     Check(xml.Contains("<AreaFieldName></AreaFieldName>") && xml.Contains("<LengthFieldName></LengthFieldName>"), "AreaFieldName/LengthFieldName 应清空");
