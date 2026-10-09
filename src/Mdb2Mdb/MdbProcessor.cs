@@ -62,8 +62,11 @@ namespace Mdb2Mdb
             if (File.Exists(Path.ChangeExtension(input, ".ldb")))
                 _log.Warn("检测到输入文件的锁文件(.ldb)，文件可能正被 ArcMap/Access 打开，建议关闭后再处理。");
 
-            File.Copy(input, output, true);
-            File.SetAttributes(output, File.GetAttributes(output) & ~FileAttributes.ReadOnly);
+            // Jet 只认系统 ANSI 代码页能表示的路径，先在 ASCII 文件名的工作副本上处理，
+            // 全部成功后再移动到输出路径
+            string work = WorkPathFor(output);
+            File.Copy(input, work, true);
+            File.SetAttributes(work, File.GetAttributes(work) & ~FileAttributes.ReadOnly);
 
             object engine = null;
             try
@@ -72,7 +75,7 @@ namespace Mdb2Mdb
                 engine = Dao.CreateEngine(out progId);
                 _log.Info("数据库引擎：" + progId);
 
-                _db = Dao.Call(engine, "OpenDatabase", output, true, false);
+                _db = Dao.Call(engine, "OpenDatabase", work, true, false);
                 try
                 {
                     ProcessDatabase();
@@ -87,12 +90,15 @@ namespace Mdb2Mdb
                     GC.WaitForPendingFinalizers();
                 }
 
-                if (compact) Compact(engine, output);
+                if (compact) Compact(engine, work);
+
+                if (File.Exists(output)) File.Delete(output);
+                File.Move(work, output);
             }
             catch
             {
-                // 处理中途出错时不留下不完整的输出文件
-                TryDelete(output);
+                // 处理中途出错时不留下不完整的文件
+                TryDelete(work);
                 throw;
             }
             finally
@@ -658,13 +664,14 @@ namespace Mdb2Mdb
 
         // ---------------------------------------------------------------- 压缩
 
-        private void Compact(object engine, string output)
+        private void Compact(object engine, string path)
         {
-            string tmp = Path.Combine(Path.GetDirectoryName(output),
-                Path.GetFileNameWithoutExtension(output) + ".compact." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".mdb");
+            string tmp = Path.Combine(Path.GetDirectoryName(path),
+                Path.GetFileNameWithoutExtension(path) + "_compact.mdb");
             try
             {
-                Dao.Call(engine, "CompactDatabase", output, tmp);
+                TryDelete(tmp);
+                Dao.Call(engine, "CompactDatabase", path, tmp);
             }
             catch (Exception ex)
             {
@@ -672,10 +679,24 @@ namespace Mdb2Mdb
                 _log.Warn("压缩数据库失败（不影响处理结果）：" + ex.Message);
                 return;
             }
-            File.Delete(output);
-            File.Move(tmp, output);
+            File.Delete(path);
+            File.Move(tmp, path);
             _log.Info("");
             _log.Info("数据库已压缩。");
+        }
+
+        /// <summary>与输出文件同目录（该目录路径 Jet 无法识别时用系统临时目录）的 ASCII 文件名工作副本。</summary>
+        private static string WorkPathFor(string output)
+        {
+            string dir = Path.GetDirectoryName(output);
+            if (!IsAnsiSafe(dir)) dir = Path.GetTempPath();
+            return Path.Combine(dir, "mdb2mdb_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".mdb");
+        }
+
+        private static bool IsAnsiSafe(string path)
+        {
+            var ansi = System.Text.Encoding.Default;
+            return ansi.GetString(ansi.GetBytes(path)) == path;
         }
 
         private static void TryDelete(string path)

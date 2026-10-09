@@ -55,7 +55,11 @@ namespace Mdb2Mdb.E2E
             _engine = Dao.CreateEngine(out progId);
             Console.WriteLine("DAO 引擎：" + progId);
 
-            CreateTestDatabase(input);
+            // 中文文件名：Jet 在非中文系统上无法直接打开，正好检验程序的处理方式
+            string build = Path.Combine(dir, "e2e_build.mdb");
+            if (File.Exists(build)) File.Delete(build);
+            CreateTestDatabase(build);
+            File.Move(build, input);
             string hashBefore = Hash(input);
 
             // 1. 进程内运行处理流程
@@ -123,7 +127,9 @@ namespace Mdb2Mdb.E2E
         {
             Console.WriteLine();
             Console.WriteLine("核对 " + Path.GetFileName(path));
-            object db = Dao.Call(_engine, "OpenDatabase", path, false, true);
+            string copy = Path.Combine(Path.GetTempPath(), "e2e_verify_" + Guid.NewGuid().ToString("N") + ".mdb");
+            File.Copy(path, copy);
+            object db = Dao.Call(_engine, "OpenDatabase", copy, false, true);
             try
             {
                 // 字段顺序、类型、长度
@@ -197,6 +203,7 @@ namespace Mdb2Mdb.E2E
             {
                 Dao.Call(db, "Close");
                 Dao.Release(db);
+                File.Delete(copy);
             }
         }
 
