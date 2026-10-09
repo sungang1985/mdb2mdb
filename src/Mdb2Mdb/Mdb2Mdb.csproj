@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET Framework 4.0：Win7 及以上（含 ArcGIS 10.x 机器）均可直接运行，无需额外安装 -->
+    <TargetFramework>net40</TargetFramework>
+    <!-- Jet 4.0 / DAO 3.6 只有 32 位版本，必须以 32 位进程运行 -->
+    <PlatformTarget>x86</PlatformTarget>
+    <AssemblyName>mdb2mdb</AssemblyName>
+    <RootNamespace>Mdb2Mdb</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Product>mdb2mdb</Product>
+    <AssemblyTitle>MDB 字段属性规范化工具</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+</Project>

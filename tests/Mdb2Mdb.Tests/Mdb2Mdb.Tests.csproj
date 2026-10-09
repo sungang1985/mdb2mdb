@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 只测试与数据库引擎无关的纯逻辑部分，可在任意平台运行：dotnet test -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- DAO 相关代码仅在 Windows 上调用，测试中不会执行 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\Mdb2Mdb\Dao.cs" Link="src\Dao.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\FieldSpecs.cs" Link="src\FieldSpecs.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\SchemaPlanner.cs" Link="src\SchemaPlanner.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\ValueConverter.cs" Link="src\ValueConverter.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\GdbDefinitionPatcher.cs" Link="src\GdbDefinitionPatcher.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4" />
+  </ItemGroup>
+
+</Project>

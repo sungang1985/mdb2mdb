@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    端到端测试：需在 Windows 上运行（依赖 Jet 4.0 / DAO）。
+    用 DAO 生成一个模拟的个人地理数据库，调用处理流程和 mdb2mdb.exe 后核对结果。
+    用法：Mdb2Mdb.E2E.exe <mdb2mdb.exe 路径> <工作目录>
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net40</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\Mdb2Mdb\Dao.cs" Link="src\Dao.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\FieldSpecs.cs" Link="src\FieldSpecs.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\SchemaPlanner.cs" Link="src\SchemaPlanner.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\ValueConverter.cs" Link="src\ValueConverter.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\GdbDefinitionPatcher.cs" Link="src\GdbDefinitionPatcher.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\Logger.cs" Link="src\Logger.cs" />
+    <Compile Include="..\..\src\Mdb2Mdb\MdbProcessor.cs" Link="src\MdbProcessor.cs" />
+  </ItemGroup>
+
+</Project>

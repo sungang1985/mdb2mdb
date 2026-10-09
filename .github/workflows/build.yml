@@ -1,0 +1,36 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 单元测试
+        run: dotnet test tests/Mdb2Mdb.Tests/Mdb2Mdb.Tests.csproj -c Release
+
+      - name: 编译 mdb2mdb.exe
+        run: dotnet build src/Mdb2Mdb/Mdb2Mdb.csproj -c Release
+
+      - name: 端到端测试（Jet 4.0 / DAO）
+        run: |
+          dotnet build tests/Mdb2Mdb.E2E/Mdb2Mdb.E2E.csproj -c Release
+          tests/Mdb2Mdb.E2E/bin/Release/net40/Mdb2Mdb.E2E.exe src/Mdb2Mdb/bin/Release/net40/mdb2mdb.exe "$env:RUNNER_TEMP/e2e"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdb2mdb
+          path: |
+            src/Mdb2Mdb/bin/Release/net40/mdb2mdb.exe
+            src/Mdb2Mdb/bin/Release/net40/mdb2mdb.exe.config
+            README.md
