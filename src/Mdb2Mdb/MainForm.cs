@@ -167,6 +167,11 @@ namespace Mdb2Mdb
                     message = "处理完成，但有 " + log.Errors + " 个错误，请查看日志。";
                     icon = MessageBoxIcon.Warning;
                 }
+                else if (log.Warnings > 0)
+                {
+                    message = "处理完成，有 " + log.Warnings + " 条警告（如数据超长、空值导致未能设置的限制），请查看日志。\r\n输出文件：" + output;
+                    icon = MessageBoxIcon.Warning;
+                }
                 else
                 {
                     message = "处理完成。\r\n输出文件：" + output;
