@@ -75,7 +75,13 @@ namespace Mdb2Mdb.E2E
             Check(summary.NullabilityFailed == 1, "未能设为不允许为空应为 1 个，实际 " + summary.NullabilityFailed);
             Check(lines.Contains("  LANE：DOUBLE → LONG；允许为空：否 → 是"), "LANE 日志应记录 否 → 是");
             Check(lines.Contains("  CLASS：TEXT(3) 已符合；允许为空：是 → 否"), "CLASS 日志应记录 是 → 否");
-            Check(lines.Contains("  GB：DOUBLE → LONG"), "PLAIN.GB 日志不应出现允许为空的变化");
+            Check(lines.Contains("  GB：DOUBLE → LONG；长度限制：最多 6 位数字"), "PLAIN.GB 日志：长度限制，且无允许为空的变化");
+
+            // 数值长度限制：ROAD 的 GB/ANGLE/PAC/WIDTH/LANE 与 PLAIN 的 ELEV/GB 共 7 个；PLAIN.WEIGHT 已有超长数据未能设置
+            Check(summary.LengthRulesSet == 7, "设置数值长度限制应为 7 个，实际 " + summary.LengthRulesSet);
+            Check(summary.LengthRulesFailed == 1, "未能设置长度限制应为 1 个，实际 " + summary.LengthRulesFailed);
+            Check(lines.Contains("  GB：TEXT(10) → LONG；长度限制：最多 6 位数字"), "ROAD.GB 日志应记录长度限制");
+            Check(lines.Contains("  ANGLE：DOUBLE → FLOAT(小数1位)；小数位数设为 1；长度限制：最多 3 位整数、1 位小数"), "ANGLE 日志应记录长度限制");
             Check(Hash(input) == hashBefore, "输入文件不应被修改");
             Verify(output);
 
@@ -89,6 +95,8 @@ namespace Mdb2Mdb.E2E
             Check(File.Exists(cliOutput), "命令行模式应生成输出文件");
             Check(File.Exists(MdbProcessor.LogPathFor(cliOutput)), "命令行模式应生成日志文件");
             if (File.Exists(cliOutput)) Verify(cliOutput);
+
+            VerifyEnforcement(output);
 
             Console.WriteLine();
             if (Failures.Count == 0)
@@ -122,10 +130,11 @@ namespace Mdb2Mdb.E2E
 
                 // 普通表（非要素类）
                 // GB：DOUBLE 且 NOT NULL → 改为 LONG 后仍应为不允许为空
-                Exec(db, "CREATE TABLE [PLAIN] ([ID] LONG, [ELEV] TEXT(20), [GB] DOUBLE NOT NULL, [Shape_Area] DOUBLE)");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (1, '12.5', 110101)");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (2, '', 110102)");
-                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB]) VALUES (3, 'n/a', 110103)");
+                // WEIGHT：标准长度 2，已有 123 超长 → 不能加长度限制
+                Exec(db, "CREATE TABLE [PLAIN] ([ID] LONG, [ELEV] TEXT(20), [GB] DOUBLE NOT NULL, [WEIGHT] LONG, [Shape_Area] DOUBLE)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB], [WEIGHT]) VALUES (1, '12.5', 110101, 5)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB], [WEIGHT]) VALUES (2, '', 110102, 123)");
+                Exec(db, "INSERT INTO [PLAIN] ([ID], [ELEV], [GB], [WEIGHT]) VALUES (3, 'n/a', 110103, NULL)");
             }
             finally
             {
@@ -149,7 +158,7 @@ namespace Mdb2Mdb.E2E
                     "ObjectID:LONG", "Shape:OLE", "GB:LONG", "NAME:TEXT(60)", "TYPE:TEXT(20)", "ANGLE:FLOAT",
                     "FTIME:DATE", "PAC:LONG", "WIDTH:FLOAT", "LANE:LONG", "KV:TEXT(8)", "类型:TEXT(20)", "CLASS:TEXT(3)"
                 });
-                ExpectFields(db, "PLAIN", new[] { "ID:LONG", "ELEV:DOUBLE", "GB:LONG" });
+                ExpectFields(db, "PLAIN", new[] { "ID:LONG", "ELEV:DOUBLE", "GB:LONG", "WEIGHT:LONG" });
                 ExpectFields(db, "GDB_Items", new[] { "ObjectID:LONG", "Name:TEXT(160)", "PhysicalName:TEXT(160)", "Type:TEXT(38)", "Definition:MEMO" });
 
                 // 数据
@@ -205,6 +214,10 @@ namespace Mdb2Mdb.E2E
                 object plainTd = Dao.Item(Dao.Get(db, "TableDefs"), "PLAIN");
                 Check(FieldProp(plainTd, "ID", "DecimalPlaces") == null, "非标准字段不设置小数位数");
                 Check((bool)Dao.Get(Dao.Item(Dao.Get(plainTd, "Fields"), "GB"), "Required"), "PLAIN.GB 改类型后应为不允许为空");
+                Eq(Dao.Get(Dao.Item(fields, "GB"), "ValidationRule"), "Is Null Or Between -999999 And 999999", "ROAD.GB 有效性规则");
+                Eq(Dao.Get(Dao.Item(fields, "ANGLE"), "ValidationRule"), "Is Null Or Between -999.95 And 999.95", "ROAD.ANGLE 有效性规则");
+                Eq(Dao.Get(Dao.Item(fields, "NAME"), "ValidationRule"), "", "文本字段不加有效性规则（长度由字段大小限制）");
+                Eq(Dao.Get(Dao.Item(Dao.Get(plainTd, "Fields"), "WEIGHT"), "ValidationRule"), "", "PLAIN.WEIGHT 已有超长数据，不设置有效性规则");
 
                 // GDB 定义
                 var items = ReadRows(db, "SELECT [Definition] FROM [GDB_Items] WHERE [PhysicalName] = 'ROAD'");
@@ -224,6 +237,88 @@ namespace Mdb2Mdb.E2E
                 Dao.Call(db, "Close");
                 Dao.Release(db);
                 File.Delete(copy);
+            }
+        }
+
+        /// <summary>在输出文件的副本上实际录入数据，检验 Jet 是否强制执行长度限制和不允许为空。</summary>
+        private static void VerifyEnforcement(string path)
+        {
+            Console.WriteLine();
+            Console.WriteLine("录入检验 " + Path.GetFileName(path));
+            string copy = Path.Combine(Path.GetTempPath(), "e2e_enforce_" + Guid.NewGuid().ToString("N") + ".mdb");
+            File.Copy(path, copy);
+            object db = Dao.Call(_engine, "OpenDatabase", copy, false, false);
+            try
+            {
+                Accepts(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (720100, 'C01')", "GB 录入 6 位数字");
+                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (7201009, 'C02')", "GB 录入 7 位数字");
+                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (-7201009, 'C03')", "GB 录入 -7201009");
+                Accepts(db, "INSERT INTO [ROAD] ([CLASS]) VALUES ('C04')", "GB 为空（ROAD.GB 有空值，仍允许为空）");
+                Accepts(db, "INSERT INTO [ROAD] ([GB], [CLASS], [ANGLE]) VALUES (720100, 'C05', 999.9)", "ANGLE 录入 999.9");
+                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS], [ANGLE]) VALUES (720100, 'C06', 1000)", "ANGLE 录入 1000");
+                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS], [LANE]) VALUES (720100, 'C07', 100)", "LANE 录入 3 位数字");
+                Rejects(db, "INSERT INTO [ROAD] ([GB]) VALUES (720100)", "CLASS 不允许为空");
+                Rejects(db, "INSERT INTO [ROAD] ([GB], [CLASS]) VALUES (720100, 'ABCD')", "CLASS 录入超过 3 个字符");
+                Accepts(db, "INSERT INTO [PLAIN] ([ID], [GB], [WEIGHT]) VALUES (9, 110101, 999)", "PLAIN.WEIGHT 未设置限制");
+
+                // 与截图相同的操作：在已有记录上把 GB 改成 7 位数
+                object rs = Dao.Call(db, "OpenRecordset", "SELECT [GB] FROM [ROAD] WHERE [GB] = 660100", Dao.dbOpenDynaset);
+                try
+                {
+                    object gb = Dao.Item(Dao.Get(rs, "Fields"), 0);
+                    bool rejected = false;
+                    string message = null;
+                    Dao.Call(rs, "Edit");
+                    try
+                    {
+                        Dao.Set(gb, "Value", 7201009);
+                        Dao.Call(rs, "Update");
+                    }
+                    catch (DaoException ex)
+                    {
+                        rejected = true;
+                        message = ex.Message;
+                        try { Dao.Call(rs, "CancelUpdate"); } catch (DaoException) { }
+                    }
+                    Check(rejected, "在已有记录上把 GB 改为 7201009 应被拒绝" + (message != null ? "（" + message + "）" : ""));
+                }
+                finally
+                {
+                    Dao.Call(rs, "Close");
+                    Dao.Release(rs);
+                }
+            }
+            finally
+            {
+                Dao.Call(db, "Close");
+                Dao.Release(db);
+                File.Delete(copy);
+            }
+        }
+
+        private static void Accepts(object db, string sql, string what)
+        {
+            try
+            {
+                Exec(db, sql);
+                Check(true, what + " 应允许");
+            }
+            catch (DaoException ex)
+            {
+                Check(false, what + " 应允许，但被拒绝：" + ex.Message);
+            }
+        }
+
+        private static void Rejects(object db, string sql, string what)
+        {
+            try
+            {
+                Exec(db, sql);
+                Check(false, what + " 应被拒绝，但录入成功");
+            }
+            catch (DaoException ex)
+            {
+                Check(true, what + " 被拒绝：" + ex.Message);
             }
         }
 

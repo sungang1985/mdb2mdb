@@ -205,6 +205,54 @@ namespace Mdb2Mdb.Tests
             Assert.Equal(expected, SchemaPlanner.ShouldProcessTable(name, attributes, connect));
         }
 
+        [Theory]
+        [InlineData("GB", "999999")]          // LONG 6
+        [InlineData("LANE", "99")]            // LONG 2
+        [InlineData("PAC", "999999999")]      // LONG 9
+        [InlineData("ANGLE", "999.95")]       // FLOAT 4,1
+        [InlineData("BG", "99.95")]           // FLOAT 3,1
+        [InlineData("ELEV", "999999.9995")]   // DOUBLE 9,3
+        [InlineData("SAREA", "999999999999.5")] // DOUBLE 12，未规定小数位
+        public void MaxAbsValueFollowsLengthAndScale(string name, string expected)
+        {
+            Assert.Equal(decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+                SchemaPlanner.MaxAbsValue(FieldSpecs.Find(name)));
+        }
+
+        [Fact]
+        public void NoLengthRuleForTextAndDate()
+        {
+            Assert.Null(SchemaPlanner.LengthValidationRule(FieldSpecs.Find("NAME")));
+            Assert.Null(SchemaPlanner.LengthValidationRule(FieldSpecs.Find("FTIME")));
+            Assert.Null(SchemaPlanner.LengthValidationText(FieldSpecs.Find("NAME")));
+        }
+
+        [Fact]
+        public void LengthRuleAndText()
+        {
+            var gb = FieldSpecs.Find("GB");
+            Assert.Equal("Is Null Or Between -999999 And 999999", SchemaPlanner.LengthValidationRule(gb));
+            Assert.Equal("最多 6 位数字", SchemaPlanner.LengthDescription(gb));
+            Assert.Equal("GB（分类代码）超出标准长度：最多 6 位数字。", SchemaPlanner.LengthValidationText(gb));
+
+            var angle = FieldSpecs.Find("ANGLE");
+            Assert.Equal("Is Null Or Between -999.95 And 999.95", SchemaPlanner.LengthValidationRule(angle));
+            Assert.Equal("最多 3 位整数、1 位小数", SchemaPlanner.LengthDescription(angle));
+            Assert.Equal("最多 12 位整数", SchemaPlanner.LengthDescription(FieldSpecs.Find("SAREA")));
+        }
+
+        [Fact]
+        public void EveryNumericSpecHasALengthRuleWithoutExponent()
+        {
+            foreach (var s in FieldSpecs.All.Where(x => x.Type == SpecType.Long || x.Type == SpecType.Float || x.Type == SpecType.Double))
+            {
+                string rule = SchemaPlanner.LengthValidationRule(s);
+                Assert.NotNull(rule);
+                Assert.DoesNotContain("E", rule.Replace("Between", "").Replace("Null", "").Replace("Is", ""));
+                Assert.True(System.Text.Encoding.UTF8.GetByteCount(SchemaPlanner.LengthValidationText(s)) < 255);
+            }
+        }
+
         [Fact]
         public void JetSqlTypesUseSingleForFloat()
         {

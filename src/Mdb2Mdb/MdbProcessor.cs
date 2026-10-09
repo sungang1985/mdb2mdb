@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 
 namespace Mdb2Mdb
@@ -13,6 +14,8 @@ namespace Mdb2Mdb
         public int PropertiesSet;
         public int NullabilitySet;
         public int NullabilityFailed;
+        public int LengthRulesSet;
+        public int LengthRulesFailed;
         public int GdbDefinitionsUpdated;
     }
 
@@ -111,9 +114,12 @@ namespace Mdb2Mdb
 
             _log.Info("");
             _log.Info(string.Format(
-                "完成：检查表 {0} 个，匹配标准字段 {1} 个，修改类型/长度 {2} 个，设置小数位数/格式 {3} 处，" +
-                "修改是否允许为空 {4} 个{5}，删除字段 {6} 个，同步 GDB 要素类定义 {7} 个；警告 {8} 条，错误 {9} 条。",
-                _summary.TablesScanned, _summary.FieldsMatched, _summary.FieldsAltered, _summary.PropertiesSet,
+                "完成：检查表 {0} 个，匹配标准字段 {1} 个，修改类型/长度 {2} 个，设置数值长度限制 {3} 个{4}，设置小数位数/格式 {5} 处，" +
+                "修改是否允许为空 {6} 个{7}，删除字段 {8} 个，同步 GDB 要素类定义 {9} 个；警告 {10} 条，错误 {11} 条。",
+                _summary.TablesScanned, _summary.FieldsMatched, _summary.FieldsAltered,
+                _summary.LengthRulesSet,
+                _summary.LengthRulesFailed > 0 ? "（另有 " + _summary.LengthRulesFailed + " 个因已有数据超长未能设置）" : "",
+                _summary.PropertiesSet,
                 _summary.NullabilitySet,
                 _summary.NullabilityFailed > 0 ? "（另有 " + _summary.NullabilityFailed + " 个因存在空值未能设为不允许为空）" : "",
                 _summary.FieldsDeleted, _summary.GdbDefinitionsUpdated, _log.Warnings, _log.Errors));
@@ -238,6 +244,9 @@ namespace Mdb2Mdb
                             notes.Add("格式设为 " + FieldSpec.DateFormat);
                         }
                     }
+
+                    string lengthNote = ApplyLengthRule(table, c, spec);
+                    if (lengthNote != null) notes.Add(lengthNote);
 
                     string nullNote = ApplyNullability(table, c, spec, result);
                     if (nullNote != null) notes.Add(nullNote);
@@ -510,7 +519,7 @@ namespace Mdb2Mdb
         {
             object field = Field(table, c.Name);
             bool current = (bool)Dao.Get(field, "Required");
-            int nulls = !spec.Nullable && !current ? CountNulls(table, c.Name) : 0;
+            int nulls = !spec.Nullable && !current ? CountWhere(table, Dao.Q(c.Name) + " IS NULL") : 0;
             var d = SchemaPlanner.DecideNullability(c.Required, current, spec.Nullable, nulls);
 
             if (d.SetRequired) Dao.Set(field, "Required", d.RequiredValue);
@@ -530,10 +539,44 @@ namespace Mdb2Mdb
             return d.Note;
         }
 
-        private int CountNulls(string table, string column)
+        // ---------------------------------------------------------------- 数值长度限制
+
+        /// <summary>
+        /// 数值型字段在 Access/Jet 中没有“长度”属性，用字段的有效性规则限制数值位数
+        /// （Access 录入、ArcGIS 编辑时都由 Jet 引擎强制检查）。已有数据超出范围时不设置并给出警告。
+        /// 返回日志说明，无改动时返回 null。
+        /// </summary>
+        private string ApplyLengthRule(string table, ColumnInfo c, FieldSpec spec)
+        {
+            string rule = SchemaPlanner.LengthValidationRule(spec);
+            if (rule == null) return null;
+
+            object field = Field(table, c.Name);
+            string current = Dao.Get(field, "ValidationRule") as string ?? "";
+            if (current == rule) return null;
+
+            string max = SchemaPlanner.MaxAbsValue(spec).Value.ToString(CultureInfo.InvariantCulture);
+            string col = Dao.Q(c.Name);
+            int over = CountWhere(table, col + " < -" + max + " OR " + col + " > " + max);
+            if (over > 0)
+            {
+                _summary.LengthRulesFailed++;
+                _log.Warn(table + "." + c.Name + " 有 " + over + " 条记录超出标准长度（" + SchemaPlanner.LengthDescription(spec) +
+                          "），未能设置长度限制（请修正数据后重新处理）。");
+                return null;
+            }
+
+            Dao.Set(field, "ValidationRule", rule);
+            Dao.Set(field, "ValidationText", SchemaPlanner.LengthValidationText(spec));
+            _summary.LengthRulesSet++;
+            return "长度限制：" + SchemaPlanner.LengthDescription(spec) +
+                   (current.Length > 0 ? "（替换原有效性规则 " + current + "）" : "");
+        }
+
+        private int CountWhere(string table, string where)
         {
             object rs = Dao.Call(_db, "OpenRecordset",
-                "SELECT COUNT(*) FROM " + Dao.Q(table) + " WHERE " + Dao.Q(column) + " IS NULL", Dao.dbOpenSnapshot);
+                "SELECT COUNT(*) FROM " + Dao.Q(table) + " WHERE " + where, Dao.dbOpenSnapshot);
             try
             {
                 return Convert.ToInt32(Dao.Get(Dao.Item(Dao.Get(rs, "Fields"), 0), "Value"));

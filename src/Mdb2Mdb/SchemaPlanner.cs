@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Mdb2Mdb
 {
@@ -135,6 +136,59 @@ namespace Mdb2Mdb
             if (d.Changed)
                 d.Note = "允许为空：" + (originalRequired ? "否 → 是" : "是 → 否") + (d.Failed ? "（存在空值，未达标准）" : "");
             return d;
+        }
+
+        /// <summary>
+        /// 数值型字段按标准“长度/小数位数”允许的最大绝对值；非数值型（或无长度）返回 null。
+        /// LONG 长度 6 → 999999；FLOAT 长度 4、小数 1 位 → 999.95（按 1 位小数显示不超过 999.9）；
+        /// 未规定小数位数的按 0 位处理。
+        /// </summary>
+        public static decimal? MaxAbsValue(FieldSpec spec)
+        {
+            if (!spec.Length.HasValue) return null;
+            switch (spec.Type)
+            {
+                case SpecType.Long:
+                    return Pow10(spec.Length.Value) - 1;
+                case SpecType.Float:
+                case SpecType.Double:
+                    int scale = spec.Scale ?? 0;
+                    return Pow10(spec.Length.Value - scale) - 0.5m / Pow10(scale);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>限制数值位数的 Access 字段“有效性规则”，由 Jet 引擎在新增/修改记录时强制检查。</summary>
+        public static string LengthValidationRule(FieldSpec spec)
+        {
+            var max = MaxAbsValue(spec);
+            if (!max.HasValue) return null;
+            string m = max.Value.ToString(CultureInfo.InvariantCulture);
+            return "Is Null Or Between -" + m + " And " + m;
+        }
+
+        /// <summary>长度限制的文字说明，如“最多 6 位数字”“最多 3 位整数、1 位小数”。</summary>
+        public static string LengthDescription(FieldSpec spec)
+        {
+            if (!MaxAbsValue(spec).HasValue) return null;
+            if (spec.Type == SpecType.Long) return "最多 " + spec.Length.Value + " 位数字";
+            int scale = spec.Scale ?? 0;
+            return "最多 " + (spec.Length.Value - scale) + " 位整数" + (scale > 0 ? "、" + scale + " 位小数" : "");
+        }
+
+        /// <summary>违反长度限制时 Access/ArcGIS 显示的“有效性文本”。</summary>
+        public static string LengthValidationText(FieldSpec spec)
+        {
+            string d = LengthDescription(spec);
+            return d == null ? null : spec.Name + "（" + spec.Meaning + "）超出标准长度：" + d + "。";
+        }
+
+        private static decimal Pow10(int n)
+        {
+            decimal r = 1;
+            for (int i = 0; i < n; i++) r *= 10;
+            return r;
         }
 
         public static bool Matches(ColumnInfo c, FieldSpec spec)
