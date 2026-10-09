@@ -239,7 +239,7 @@ namespace Mdb2Mdb
                         }
                     }
 
-                    string nullNote = ApplyNullability(table, c.Name, spec, result);
+                    string nullNote = ApplyNullability(table, c, spec, result);
                     if (nullNote != null) notes.Add(nullNote);
 
                     _log.Info("  " + c.Name + "：" + string.Join("；", notes.ToArray()));
@@ -504,35 +504,30 @@ namespace Mdb2Mdb
 
         /// <summary>
         /// 按标准设置字段的“必需”属性（不允许为空 = 必需）。已有空值的字段无法设为不允许为空，
-        /// 保持原状并给出警告。返回日志说明，无改动时返回 null。
+        /// 保持允许为空并给出警告。返回日志说明，与输入相比无变化时返回 null。
         /// </summary>
-        private string ApplyNullability(string table, string column, FieldSpec spec, TableResult result)
+        private string ApplyNullability(string table, ColumnInfo c, FieldSpec spec, TableResult result)
         {
-            object field = Field(table, column);
-            bool required = (bool)Dao.Get(field, "Required");
-            bool wantRequired = !spec.Nullable;
-            string note = null;
+            object field = Field(table, c.Name);
+            bool current = (bool)Dao.Get(field, "Required");
+            int nulls = !spec.Nullable && !current ? CountNulls(table, c.Name) : 0;
+            var d = SchemaPlanner.DecideNullability(c.Required, current, spec.Nullable, nulls);
 
-            if (required != wantRequired)
+            if (d.SetRequired) Dao.Set(field, "Required", d.RequiredValue);
+            if (d.Failed)
             {
-                int nulls = wantRequired ? CountNulls(table, column) : 0;
-                if (nulls > 0)
-                {
-                    _summary.NullabilityFailed++;
-                    _log.Warn(table + "." + column + " 按标准不允许为空，但有 " + nulls +
-                              " 条记录为空值，未能设置（请补全数据后重新处理）。");
-                }
-                else
-                {
-                    Dao.Set(field, "Required", wantRequired);
-                    required = wantRequired;
-                    _summary.NullabilitySet++;
-                    note = "允许为空：" + (wantRequired ? "是 → 否" : "否 → 是");
-                }
+                _summary.NullabilityFailed++;
+                _log.Warn(table + "." + c.Name + " 按标准不允许为空，但有 " + nulls + " 条记录为空值" +
+                          (c.Required ? "（原数据中无法转换为新类型的值已被置空）" : "") +
+                          "，未能设为不允许为空（请补全数据后重新处理）。");
+            }
+            else if (d.Changed)
+            {
+                _summary.NullabilitySet++;
             }
 
-            result.IsNullable[column] = !required;
-            return note;
+            result.IsNullable[c.Name] = !d.FinalRequired;
+            return d.Note;
         }
 
         private int CountNulls(string table, string column)

@@ -101,22 +101,81 @@ namespace Mdb2Mdb.Tests
             Assert.All(SchemaPlanner.Plan(columns), p => Assert.False(p.NeedTypeChange));
         }
 
-        [Fact]
-        public void NullabilityFollowsStandard()
-        {
-            var plans = SchemaPlanner.Plan(new[]
-            {
-                Col("GB", Dao.dbLong, 4),                          // 标准：否，当前允许为空 → 需修改
-                Col("CLASS", Dao.dbText, 3, required: true),       // 标准：否，已必需
-                Col("NAME", Dao.dbText, 60, required: true),       // 标准：是，当前必需 → 需修改
-                Col("TYPE", Dao.dbText, 20),                       // 标准：是，已允许为空
-            }).ToDictionary(p => p.Column.Name);
+        // DecideNullability(原始必需, 当前必需, 标准允许为空, 空值数)
 
-            Assert.True(plans["GB"].NeedNullabilityChange);
-            Assert.False(plans["CLASS"].NeedNullabilityChange);
-            Assert.True(plans["NAME"].NeedNullabilityChange);
-            Assert.False(plans["TYPE"].NeedNullabilityChange);
-            Assert.False(plans["GB"].NeedTypeChange);
+        [Fact]
+        public void NullableToNotNullWhenNoNulls()
+        {
+            var d = SchemaPlanner.DecideNullability(false, false, false, 0);
+            Assert.True(d.SetRequired);
+            Assert.True(d.RequiredValue);
+            Assert.True(d.FinalRequired);
+            Assert.True(d.Changed);
+            Assert.False(d.Failed);
+            Assert.Equal("允许为空：是 → 否", d.Note);
+        }
+
+        [Fact]
+        public void NotNullFailsWhenNullsExist()
+        {
+            var d = SchemaPlanner.DecideNullability(false, false, false, 3);
+            Assert.False(d.SetRequired);
+            Assert.False(d.FinalRequired);
+            Assert.True(d.Failed);
+            Assert.False(d.Changed);
+            Assert.Null(d.Note);
+        }
+
+        [Fact]
+        public void RequiredToNullable()
+        {
+            var d = SchemaPlanner.DecideNullability(true, true, true, 0);
+            Assert.True(d.SetRequired);
+            Assert.False(d.RequiredValue);
+            Assert.True(d.Changed);
+            Assert.Equal("允许为空：否 → 是", d.Note);
+        }
+
+        [Fact]
+        public void AlreadyConformingIsNoChange()
+        {
+            Assert.False(SchemaPlanner.DecideNullability(false, false, true, 0).SetRequired);
+            Assert.Null(SchemaPlanner.DecideNullability(false, false, true, 0).Note);
+            Assert.False(SchemaPlanner.DecideNullability(true, true, false, 0).SetRequired);
+            Assert.Null(SchemaPlanner.DecideNullability(true, true, false, 0).Note);
+        }
+
+        [Fact]
+        public void TempColumnConversionClearedRequiredOnNotNullSpec()
+        {
+            // 原本必需，逐条转换类型时被临时清除，标准要求不允许为空：恢复为必需，但与输入相比无变化
+            var d = SchemaPlanner.DecideNullability(true, false, false, 0);
+            Assert.True(d.SetRequired);
+            Assert.True(d.FinalRequired);
+            Assert.False(d.Changed);
+            Assert.Null(d.Note);
+        }
+
+        [Fact]
+        public void TempColumnConversionClearedRequiredOnNullableSpec()
+        {
+            // 原本必需，转换后已是允许为空且符合标准：无需再设置，但与输入相比有变化，需要记录
+            var d = SchemaPlanner.DecideNullability(true, false, true, 0);
+            Assert.False(d.SetRequired);
+            Assert.False(d.FinalRequired);
+            Assert.True(d.Changed);
+            Assert.Equal("允许为空：否 → 是", d.Note);
+        }
+
+        [Fact]
+        public void ConversionProducedNullsOnNotNullSpec()
+        {
+            // 原本必需，转换时无法转换的值被置空，无法恢复为必需
+            var d = SchemaPlanner.DecideNullability(true, false, false, 2);
+            Assert.False(d.SetRequired);
+            Assert.True(d.Failed);
+            Assert.True(d.Changed);
+            Assert.Equal("允许为空：否 → 是（存在空值，未达标准）", d.Note);
         }
 
         [Fact]

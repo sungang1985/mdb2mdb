@@ -64,9 +64,18 @@ namespace Mdb2Mdb.E2E
             string hashBefore = Hash(input);
 
             // 1. 进程内运行处理流程
-            var log = new Logger(Console.WriteLine);
-            new MdbProcessor(log).Run(input, output, true);
+            var lines = new List<string>();
+            var log = new Logger(l => { Console.WriteLine(l); lines.Add(l); });
+            var summary = new MdbProcessor(log).Run(input, output, true);
             Check(log.Errors == 0, "处理过程中不应有错误，实际 " + log.Errors);
+
+            // 日志与计数按“输入原始状态 → 最终状态”统计：CLASS 是→否、KV 否→是、LANE 否→是（逐条转换路径），
+            // ROAD.GB 因空值未能设置，PLAIN.GB 原本就是不允许为空
+            Check(summary.NullabilitySet == 3, "修改是否允许为空应为 3 个，实际 " + summary.NullabilitySet);
+            Check(summary.NullabilityFailed == 1, "未能设为不允许为空应为 1 个，实际 " + summary.NullabilityFailed);
+            Check(lines.Contains("  LANE：DOUBLE → LONG；允许为空：否 → 是"), "LANE 日志应记录 否 → 是");
+            Check(lines.Contains("  CLASS：TEXT(3) 已符合；允许为空：是 → 否"), "CLASS 日志应记录 是 → 否");
+            Check(lines.Contains("  GB：DOUBLE → LONG"), "PLAIN.GB 日志不应出现允许为空的变化");
             Check(Hash(input) == hashBefore, "输入文件不应被修改");
             Verify(output);
 
@@ -103,7 +112,7 @@ namespace Mdb2Mdb.E2E
                 // 要素类：多种不符合标准的字段
                 Exec(db, "CREATE TABLE [ROAD] ([ObjectID] COUNTER CONSTRAINT [PK_ROAD] PRIMARY KEY, [Shape] LONGBINARY, " +
                          "[GB] TEXT(10), [NAME] TEXT(50), [TYPE] TEXT(50), [ANGLE] DOUBLE, [FTIME] TEXT(30), [PAC] DOUBLE, " +
-                         "[WIDTH] SINGLE, [LANE] DOUBLE, [KV] LONG NOT NULL, [类型] TEXT(20), [CLASS] TEXT(3), [Shape_Length] DOUBLE, [Shape_Area] DOUBLE)");
+                         "[WIDTH] SINGLE, [LANE] DOUBLE NOT NULL, [KV] LONG NOT NULL, [类型] TEXT(20), [CLASS] TEXT(3), [Shape_Length] DOUBLE, [Shape_Area] DOUBLE)");
                 Exec(db, "CREATE INDEX [IX_NAME] ON [ROAD] ([NAME])");
                 Exec(db, "CREATE INDEX [IX_SL] ON [ROAD] ([Shape_Length])");
                 Exec(db, "INSERT INTO [ROAD] ([GB], [NAME], [TYPE], [ANGLE], [FTIME], [PAC], [WIDTH], [LANE], [KV], [类型], [CLASS], [Shape_Length], [Shape_Area]) " +
@@ -188,6 +197,7 @@ namespace Mdb2Mdb.E2E
                 Check(!(bool)Dao.Get(Dao.Item(fields, "GB"), "Required"), "ROAD.GB 有空值，应保持允许为空");
                 Check(!(bool)Dao.Get(Dao.Item(fields, "KV"), "Required"), "KV 原为必填，应按标准改为允许为空");
                 Check(!(bool)Dao.Get(Dao.Item(fields, "NAME"), "Required"), "NAME 应允许为空");
+                Check(!(bool)Dao.Get(Dao.Item(fields, "LANE"), "Required"), "LANE 原为必填，逐条转换后应按标准为允许为空");
                 Check(!(bool)Dao.Get(Dao.Item(fields, "类型"), "Required"), "非标准字段不受影响");
                 Eq(FieldProp(road, "ANGLE", "DecimalPlaces"), (byte)1, "ANGLE 小数位数");
                 Eq(FieldProp(road, "WIDTH", "DecimalPlaces"), (byte)1, "WIDTH 小数位数");
